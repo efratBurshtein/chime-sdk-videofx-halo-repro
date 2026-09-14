@@ -1,379 +1,95 @@
-# Amazon Chime SDK — Background Filter Edge Quality: 1.0 vs 2.0
+# Amazon Chime SDK - Background Filter Edge Quality: 1.0 vs 2.0
 
-A minimal, self-contained reproduction that compares foreground-segmentation edge quality between the two Amazon Chime SDK background-filter generations, using the same camera and the same SDK version.
+A minimal, self-contained reproduction that compares foreground-segmentation
+edge quality between the two Amazon Chime SDK for JavaScript background-filter
+generations, using the same camera and the same SDK build:
 
-## Comparison
+| Generation | Processor | Segmentation model input |
+| --- | --- | --- |
+| 1.0 (legacy) | BackgroundBlurVideoFrameProcessor / BackgroundReplacementVideoFrameProcessor | 256 x 144 |
+| 2.0 (current) | VideoFxProcessor | 176 x 160 |
 
-| Generation        | Processor                                                                        | Segmentation model input |
-| ----------------- | -------------------------------------------------------------------------------- | ------------------------ |
-| **1.0 (legacy)**  | `BackgroundBlurVideoFrameProcessor` / `BackgroundReplacementVideoFrameProcessor` | `256 × 144`              |
-| **2.0 (current)** | `VideoFxProcessor`                                                               | `176 × 160`              |
+SDK version under test: amazon-chime-sdk-js@3.32.0.
 
-**SDK version under test:** `amazon-chime-sdk-js@3.32.0`
+## Summary of the issue
 
----
+After migrating background blur / replacement from the 1.0 processors to
+VideoFxProcessor (2.0), we observe a soft, semi-transparent halo around the
+person silhouette (head, shoulders, hair). Under 1.0 the same subject on the
+same camera produces a noticeably tighter, cleaner cutout.
 
-## Summary of the Issue
+This POC removes our application entirely (no meeting session, no state
+management, no framework) so the two generations can be compared side by side on
+identical input. The processing pipeline is intentionally identical for both:
 
-After migrating background blur / replacement from the 1.0 processors to `VideoFxProcessor` (2.0), we observe a soft, semi-transparent **halo around the person silhouette**, particularly around the head, shoulders and hair.
-
-Under 1.0, the same subject using the same camera produces a noticeably tighter and cleaner cutout.
-
-This POC removes our application entirely — no meeting session, state management, framework, or application-level compositing — so the two generations can be compared side by side on identical input.
-
-The processing pipeline is intentionally identical for both implementations:
-
-```text
-Camera
-  ↓
-VideoFrameProcessor
-  ↓
-DefaultVideoTransformDevice
-  ↓
-DefaultDeviceController.startVideoInput()
-  ↓
-Video element
+```
+camera -> VideoFrameProcessor -> DefaultVideoTransformDevice
+       -> DefaultDeviceController.startVideoInput -> video element
 ```
 
-No cropping, scaling, or compositing is performed by this POC.
+No cropping, scaling, or compositing is performed by this POC. Every
+transformation happens inside the SDK.
 
----
+## What we found
 
-## What We Found
+- The halo reproduces in this isolated POC, so it is NOT caused by our
+  application layer.
+- It reproduces with a solid-color replacement background (the "solid green"
+  button), so it is not related to a specific background image or to any
+  compositing on our side; it originates in the segmentation mask.
+- Tracing the installed SDK, the 2.0 segmentation mask is produced at a fixed
+  176 x 160 and upscaled to the stream resolution inside the processor renderer.
+  The 1.0 model runs at 256 x 144. The lower 2.0 mask resolution and its upscale
+  are consistent with the softer edge we observe.
+- The public 2.0 API (VideoFxConfig, VideoFxSpec, processingBudgetPerFrame)
+  exposes no setting to control segmentation resolution or edge sharpness.
 
-### 1. The issue reproduces outside the application layer
+## Prerequisites
 
-The halo reproduces in this isolated POC.
+- Node.js 18+ and npm.
+- A webcam.
+- A browser that supports WebGL2 + WebAssembly + Web Workers (required by the
+  SDK background filters).
+- Internet access: the background-filter model assets are downloaded at runtime
+  from the Amazon Chime SDK asset CDN (https://static.sdkassets.chime.aws).
 
-This demonstrates that the behavior is not caused by our application code, meeting integration, state management, or application-level video processing.
+## Running
 
-### 2. The issue reproduces with a solid-color background
+Install dependencies, then start the Vite dev server (the `start` script is
+aliased to `vite` in package.json):
 
-The halo also reproduces when using a solid-color replacement background.
-
-This eliminates the replacement image itself and any image-specific rendering behavior as the cause.
-
-The edge artifact remains visible against a uniform background, indicating that it originates from the foreground segmentation result.
-
-### 3. The issue occurs across camera resolutions
-
-Changing the requested camera resolution does **not** eliminate the halo.
-
-The issue reproduces across the tested camera resolutions.
-
-Therefore, camera/output resolution is **not considered the root cause of the halo**.
-
-Higher resolutions can change the visual scale of the segmentation mask relative to the video stream, but the halo itself is present independently of the selected camera resolution.
-
-### 4. The difference is specific to the processor generation
-
-Using the same camera and the same SDK version, the following comparison consistently shows a difference in edge quality:
-
-```text
-Background Filter 1.0
-        vs.
-Background Filter 2.0
 ```
-
-The 1.0 processors produce a tighter foreground boundary, while `VideoFxProcessor` 2.0 produces a softer transition around the subject.
-
-### 5. The 2.0 segmentation mask has a fixed resolution
-
-Tracing the installed SDK shows that the 2.0 segmentation mask is produced at a fixed:
-
-```text
-176 × 160
-```
-
-and is subsequently upscaled to the stream resolution inside the processor renderer.
-
-The 1.0 model operates at:
-
-```text
-256 × 144
-```
-
-This is an implementation difference between the two generations.
-
-However, the difference in segmentation resolution alone does **not** explain the complete behavior, since the halo is reproduced across different camera/output resolutions.
-
-Further investigation is therefore required at the segmentation/model/renderer level to determine the exact cause of the softer edge.
-
----
-
-## API Limitations
-
-The public 2.0 API exposes configuration such as:
-
-* `VideoFxConfig`
-* `VideoFxSpec`
-* `processingBudgetPerFrame`
-
-However, the public API does not expose a setting for controlling:
-
-* Segmentation resolution
-* Mask resolution
-* Edge sharpness
-* Mask refinement
-* Segmentation quality
-
-Therefore, there is currently no public `VideoFxProcessor` configuration that allows us to directly tune the segmentation edge quality.
-
----
-
-## Reproduction Environment
-
-### SDK
-
-```text
-amazon-chime-sdk-js@3.32.0
-```
-
-### Requirements
-
-* Node.js 18+
-* npm
-* Webcam
-* Browser with:
-
-  * WebGL2
-  * WebAssembly
-  * Web Workers
-* Internet access
-
-The background-filter model assets are downloaded at runtime from the Amazon Chime SDK asset CDN:
-
-```text
-https://static.sdkassets.chime.aws
-```
-
----
-
-## Running the POC
-
-Install dependencies:
-
-```bash
 npm install
-```
-
-Start the Vite development server:
-
-```bash
 npm start
 ```
 
-`npm start` is aliased to `vite` in `package.json`.
+Then open the printed URL (default http://localhost:5178) and grant camera
+permission.
 
-Open the URL printed by Vite.
+## How to reproduce the comparison
 
-The default URL is:
+1. Click "Replacement 2.0 (solid green)" and observe the halo along the
+   silhouette. The uniform background makes the mask edge easy to see.
+2. Compare "Blur 1.0" vs "Blur 2.0", then "Replacement 1.0" vs
+   "Replacement 2.0" using the same image. Same subject, same camera.
+3. Optionally change "Requested resolution", click "Apply camera / resolution",
+   and repeat. Higher capture resolutions increase the mask upscale factor.
 
-```text
-http://localhost:5178
+The on-screen log records the intrinsic video resolution and which segmentation
+model each generation uses.
+
+## Project structure
+
+```
+index.html                                 UI and styling
+src/main.ts                                DOM wiring and comparison controls
+src/background-filter-controller.ts        SDK integration for both 1.0 and 2.0
+public/bg1.jpg, public/bg-respondent.png   Same-origin replacement images
 ```
 
-Grant camera permission when prompted.
-
----
-
-## How to Reproduce the Comparison
-
-### 1. Test Replacement 2.0
-
-Click:
-
-**Replacement 2.0 (solid green)**
-
-Observe the edge around the person's silhouette, especially around:
-
-* Hair
-* Head
-* Shoulders
-
-The solid background makes the segmentation edge easier to inspect.
-
-### 2. Compare Blur
-
-Compare:
-
-**Blur 1.0**
-vs.
-**Blur 2.0**
-
-Use the same subject, camera and environment.
-
-### 3. Compare Replacement
-
-Compare:
-
-**Replacement 1.0**
-vs.
-**Replacement 2.0**
-
-Again, use the same subject and camera.
-
-### 4. Change Camera Resolution
-
-Use the **Requested resolution** control and click:
-
-**Apply camera / resolution**
-
-Repeat the comparison at different resolutions.
-
-The halo remains reproducible across the tested resolutions.
-
-### 5. Check the On-Screen Log
-
-The on-screen log records:
-
-* Intrinsic video resolution
-* Processor generation
-* Segmentation model used
-
-This allows the active processing configuration to be verified during each test.
-
----
-
-## Why the Solid-Color Background Is Important
-
-The solid-color replacement provides a controlled environment for inspecting the segmentation mask.
-
-Because the replacement background contains no texture or image details, the boundary between foreground and background is directly visible.
-
-This makes the difference between the two processor generations easier to isolate:
-
-```text
-Subject
-   ↓
-Segmentation mask
-   ↓
-Foreground / background boundary
-   ↓
-Replacement
-```
-
-The halo remains visible even with a uniform replacement color, supporting the conclusion that it originates from the segmentation result rather than from the replacement image.
-
----
-
-## Technical Comparison
-
-|                             | Background Filter 1.0                                                            | Background Filter 2.0 |
-| --------------------------- | -------------------------------------------------------------------------------- | --------------------- |
-| Processor                   | `BackgroundBlurVideoFrameProcessor` / `BackgroundReplacementVideoFrameProcessor` | `VideoFxProcessor`    |
-| SDK                         | `3.32.0`                                                                         | `3.32.0`              |
-| Segmentation input          | `256 × 144`                                                                      | `176 × 160`           |
-| Same camera                 | Yes                                                                              | Yes                   |
-| Same output pipeline        | Yes                                                                              | Yes                   |
-| Solid-color replacement     | Yes                                                                              | Yes                   |
-| Halo reproduced             | No / significantly less visible                                                  | Yes                   |
-| Public edge-quality control | No                                                                               | No                    |
-
----
-
-## Project Structure
-
-```text
-.
-├── index.html
-├── src/
-│   ├── main.ts
-│   └── background-filter-controller.ts
-├── public/
-│   ├── bg1.jpg
-│   └── bg-respondent.png
-├── package.json
-└── README.md
-```
-
-### Files
-
-| File                                  | Description                          |
-| ------------------------------------- | ------------------------------------ |
-| `index.html`                          | UI and styling                       |
-| `src/main.ts`                         | DOM wiring and comparison controls   |
-| `src/background-filter-controller.ts` | SDK integration for both 1.0 and 2.0 |
-| `public/bg1.jpg`                      | Replacement background               |
-| `public/bg-respondent.png`            | Replacement background               |
-
----
-
-## Implementation Notes
-
-### Background Replacement 1.0
-
-The legacy replacement processor accepts an image `Blob`.
-
-The POC therefore fetches the same-origin replacement image and passes the resulting `Blob` to the processor.
-
-### Background Replacement 2.0
-
-`VideoFxProcessor` accepts the replacement image through a direct image URL.
-
-### Common Processing Pipeline
-
-Both processor generations are wrapped in:
-
-```text
-DefaultVideoTransformDevice
-```
-
-and applied through:
-
-```text
-DefaultDeviceController.startVideoInput()
-```
-
-This keeps the application-level processing path identical between the two implementations.
-
----
-
-## Scope
-
-This POC focuses specifically on:
-
-> **Foreground segmentation edge quality**
-
-It is not intended to evaluate the overall performance of Background Filters 1.0 vs. 2.0.
-
-The following are outside the scope of this POC:
-
-* CPU utilization
-* GPU utilization
-* Memory consumption
-* Processor lifecycle
-* Initialization time
-* Processor switching performance
-* Browser compatibility
-* Overall video quality
-* Background image quality
-
----
-
-## Conclusion
-
-The edge-quality difference between Background Filter 1.0 and 2.0 is reproducible in a minimal, isolated environment.
-
-The behavior:
-
-* Reproduces without the application layer
-* Reproduces with a solid-color replacement background
-* Reproduces across the tested camera resolutions
-* Is consistently more noticeable with `VideoFxProcessor` 2.0
-
-The investigation shows that the two processor generations use different segmentation configurations, including different segmentation-model input resolutions.
-
-However, **camera/output resolution is not considered the root cause of the halo**, since the artifact is reproduced across the tested resolutions.
-
-The remaining question is why the 2.0 segmentation pipeline produces a softer foreground boundary than the 1.0 pipeline, and whether this behavior can be controlled or improved through the SDK.
-
----
-
-## SDK Version Under Test
-
-```text
-amazon-chime-sdk-js@3.32.0
-```
-
-**Status:** POC complete — edge-quality difference reproduced and isolated from the application layer.
+## Notes
+
+- Background replacement 1.0 accepts an image blob, so the POC fetches the
+  same-origin image and passes the blob; 2.0 accepts a direct image URL.
+- Both processors are wrapped in a DefaultVideoTransformDevice and applied via
+  DefaultDeviceController.startVideoInput, mirroring standard SDK usage.
