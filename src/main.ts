@@ -21,6 +21,7 @@ const els = {
   camera: document.getElementById('camera-select') as HTMLSelectElement,
   blurStrength: document.getElementById('blur-strength') as HTMLSelectElement,
   resolution: document.getElementById('resolution') as HTMLSelectElement,
+  budget: document.getElementById('processing-budget') as HTMLSelectElement,
 };
 
 function log(message: string): void {
@@ -66,6 +67,12 @@ function selectedBlurStrength(): VideoFxBlurStrength {
   return els.blurStrength.value as VideoFxBlurStrength;
 }
 
+/** The selected v2 processingBudgetPerFrame, or undefined to use the SDK default (50). */
+function selectedBudget(): number | undefined {
+  const v = els.budget?.value;
+  return v ? Number(v) : undefined;
+}
+
 function bindControls(): void {
   const onClick = (id: string, handler: () => Promise<void>): void => {
     document.getElementById(id)?.addEventListener('click', () => void handler());
@@ -74,16 +81,28 @@ function bindControls(): void {
   // Background Filter 2.0 — VideoFxProcessor.
   onClick('btn-none', () => run({ generation: 'v2', effect: 'none' }, 'None (raw camera)'));
   onClick('btn-blur2', () =>
-    run({ generation: 'v2', effect: 'blur', blurStrength: selectedBlurStrength() }, `Blur 2.0 (${selectedBlurStrength()})`),
+    run(
+      { generation: 'v2', effect: 'blur', blurStrength: selectedBlurStrength(), processingBudgetPerFrame: selectedBudget() },
+      `Blur 2.0 (${selectedBlurStrength()}, budget=${selectedBudget() ?? 'default'})`,
+    ),
   );
   onClick('btn-image2-bg1', () =>
-    run({ generation: 'v2', effect: 'replacement', imageUrl: IMAGE_A }, 'Replacement 2.0 (image A)'),
+    run(
+      { generation: 'v2', effect: 'replacement', imageUrl: IMAGE_A, processingBudgetPerFrame: selectedBudget() },
+      `Replacement 2.0 (image A, budget=${selectedBudget() ?? 'default'})`,
+    ),
   );
   onClick('btn-image2-resp', () =>
-    run({ generation: 'v2', effect: 'replacement', imageUrl: IMAGE_B }, 'Replacement 2.0 (image B)'),
+    run(
+      { generation: 'v2', effect: 'replacement', imageUrl: IMAGE_B, processingBudgetPerFrame: selectedBudget() },
+      `Replacement 2.0 (image B, budget=${selectedBudget() ?? 'default'})`,
+    ),
   );
   onClick('btn-color2', () =>
-    run({ generation: 'v2', effect: 'replacement', color: SOLID_GREEN }, 'Replacement 2.0 (solid green)'),
+    run(
+      { generation: 'v2', effect: 'replacement', color: SOLID_GREEN, processingBudgetPerFrame: selectedBudget() },
+      `Replacement 2.0 (solid green, budget=${selectedBudget() ?? 'default'})`,
+    ),
   );
 
   // Background Filter 1.0 — legacy processors.

@@ -42,6 +42,12 @@ export interface EffectRequest {
   color?: string;
   /** Blur strength (v2 only). v1 blur uses a fixed pixel radius. */
   blurStrength?: VideoFxBlurStrength;
+  /**
+   * v2 only. Throttling budget passed to VideoFxProcessor.create() (SDK default is 50).
+   * AWS suggested a low budget can reduce visual quality; use this to test edge quality.
+   * Only settable at create() time, so v2 rebuilds the processor when this is provided.
+   */
+  processingBudgetPerFrame?: number;
 }
 
 const LEGACY_BLUR_PIXELS = 15;
@@ -134,12 +140,19 @@ export class BackgroundFilterController {
       return null;
     }
     const config = this.buildVideoFxConfig(request);
-    if (!this.videoFxProcessor) {
-      this.videoFxProcessor = await VideoFxProcessor.create(this.logger, config);
-      this.log('Created VideoFxProcessor (2.0, segmentation model 176x160).');
-    } else {
-      await this.videoFxProcessor.setEffectConfig(config);
-    }
+    // processingBudgetPerFrame can only be set at create() time (not via setEffectConfig).
+    // teardownActiveTransform() already cleared any previous processor, so create a fresh one;
+    // when a budget is provided, pass it as the 3rd argument to VideoFxProcessor.create().
+    const budget = request.processingBudgetPerFrame;
+    this.videoFxProcessor =
+      budget !== undefined
+        ? await VideoFxProcessor.create(this.logger, config, budget)
+        : await VideoFxProcessor.create(this.logger, config);
+    this.log(
+      'Created VideoFxProcessor (2.0, segmentation model 176x160, processingBudgetPerFrame=' +
+        (budget !== undefined ? String(budget) : 'default(50)') +
+        ').'
+    );
     return this.videoFxProcessor;
   }
 
